@@ -63,6 +63,8 @@ sudo ./awg2
 
 That installs AmneziaWG 2.0, applies the hardened profile, creates a first client `phone`, and prints its QR. Import it with the **Amnezia client ≥ 4.8.12.9** (only that client speaks AWG 2.0 today).
 
+📖 **Client setup (which app + how to import the configs, per platform):** [docs/USAGE.md](docs/USAGE.md) · [по‑русски](docs/USAGE.ru.md)
+
 > Leaving `AWG_SNI` empty still works — it falls back to *shape‑only* QUIC mimicry (looks like QUIC, no embedded SNI). For serious DPI, set a real SNI.
 
 ## 🔑 The one knob — your SNI
