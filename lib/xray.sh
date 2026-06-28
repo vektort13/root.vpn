@@ -215,13 +215,15 @@ xray_setup() {
 
 # add a VLESS client (idempotent); rebuild config
 xray_add_client() {
-    local name="$1" uuid sid
+    local name="${1:-}"; [ -n "$name" ] || return 0
+    local uuid sid
     mkdir -p "$XRAY_DIR"; touch "$XRAY_CLIENTS"
-    if awk -F'\t' -v n="$name" '$1==n{f=1} END{exit !f}' "$XRAY_CLIENTS"; then return 0; fi
-    uuid="$("$(xbin)" uuid 2>/dev/null)" || die "xray uuid failed"
-    sid="$(xray_rand_sid)"
-    printf '%s\t%s\t%s\n' "$name" "$uuid" "$sid" >> "$XRAY_CLIENTS"
-    xray_rebuild
+    if ! awk -F'\t' -v n="$name" '$1==n{f=1} END{exit !f}' "$XRAY_CLIENTS"; then
+        uuid="$("$(xbin)" uuid 2>/dev/null)" || die "xray uuid failed"
+        sid="$(xray_rand_sid)"
+        printf '%s\t%s\t%s\n' "$name" "$uuid" "$sid" >> "$XRAY_CLIENTS"
+    fi
+    xray_rebuild   # always rebuild so config.json reflects clients.tsv (incl. re-runs)
 }
 
 xray_remove_client() {

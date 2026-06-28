@@ -293,14 +293,19 @@ self_checks() {
 }
 
 print_client() {
-    local name="$1" conf="/root/awg/$name.conf"
+    local name="${1:-}"                       # ${1:-} not "$1": avoid set -u abort
+    [ -n "$name" ] || return 0
+    local conf="/root/awg/$name.conf"
     [ -f "$conf" ] || return 0
     echo
-    log "client '$name' — scan this QR with the Amnezia client (>= 4.8.12.9):"
-    if command -v qrencode >/dev/null 2>&1; then qrencode -t ansiutf8 < "$conf"; fi
-    echo "  config : $conf"
-    echo "  qr png : /root/awg/$name.png"
-    echo "  vpnuri : /root/awg/$name.vpnuri  (one-tap import)"
+    log "client '$name' — AmneziaWG (UDP/443). Import into the Amnezia / AmneziaWG app (>= 4.8.12.x):"
+    echo "  vpn:// link (AmneziaVPN app):  /root/awg/$name.vpnuri"
+    echo "  vpn:// QR  (AmneziaVPN app):   /root/awg/$name.vpnuri.png"
+    echo "  .conf      (AmneziaWG/awg-quick): $conf"
+    echo "  .conf QR   (AmneziaWG app):    /root/awg/$name.png"
+    # The .conf / vpn:// payloads are large (>~2.5 KB); a terminal QR would exceed
+    # capacity, so we point to the PNGs upstream already generated. Never abort here.
+    return 0
 }
 
 # ---------------------------------------------------------------------------
