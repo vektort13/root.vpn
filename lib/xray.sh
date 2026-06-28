@@ -21,7 +21,10 @@ XRAY_FLOOR="25.6.8"   # minimum Xray-core version (Aparecium/NewSessionTicket fi
 # Curated REALITY decoy targets: foreign, TLS1.3+HTTP2, non-redirecting, not the
 # overused Apple/CDN set. One is picked at random per deploy (uniqueness); the
 # operator should still set REALITY_DEST to something plausible for the exit region.
-XRAY_DESTS_DEFAULT="www.microsoft.com www.amazon.com www.lovelive-anime.jp dl.google.com www.nvidia.com"
+# REALITY decoy targets must be REALITY-FRIENDLY: TLS1.3 + HTTP/2 + a small, clean
+# cert chain (a huge RSA+OCSP chain like www.microsoft.com BREAKS the REALITY MITM —
+# "handshake did not complete"). These are verified-good, foreign, non-redirecting.
+XRAY_DESTS_DEFAULT="dl.google.com www.lovelive-anime.jp cdn.jsdelivr.net"
 
 xbin() { if command -v xray >/dev/null 2>&1; then echo xray; else echo "$XRAY_BIN"; fi; }
 have_xray() { command -v xray >/dev/null 2>&1 || [ -x "$XRAY_BIN" ]; }
@@ -67,9 +70,11 @@ xray_gen_keys() {
     printf '%s\t%s\n' "$priv" "$pub"
 }
 
-dest_ok() {  # host:port reachable with TLS 1.3
-    local hp="$1" host="${1%%:*}"
-    echo | timeout 8 openssl s_client -connect "$hp" -servername "$host" -tls1_3 >/dev/null 2>&1
+dest_ok() {  # REALITY-suitable: reachable + TLS1.3 + verified chain + HTTP/2
+    local hp="$1" host="${1%%:*}" out
+    out="$(echo | timeout 10 openssl s_client -connect "$hp" -servername "$host" -tls1_3 -alpn h2 2>/dev/null)" || return 1
+    printf '%s' "$out" | grep -q 'Verify return code: 0' || return 1
+    printf '%s' "$out" | grep -q 'ALPN protocol: h2'
 }
 
 pick_dest() {
