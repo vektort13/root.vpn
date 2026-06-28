@@ -38,7 +38,9 @@ scp root@SERVER:/etc/rootvpn/xray/clients/<name>/vless.txt .
 ### 🪟 Windows
 - **AmneziaWG profile** → **AmneziaVPN** (amnezia.org/downloads). Open → `+` →
   *Import configuration* → paste the `vpn://…` (from `<name>.vpnuri`) or load the
-  `.conf` → Connect.
+  `.conf` → Connect. *Use the full **AmneziaVPN** app — the lightweight
+  "AmneziaWG for Windows" 2.0.0 has a known I1–I5 bug ("Unable to set device
+  configuration") that rejects the QUIC‑mimicry config.*
 - **VLESS profile** → **v2rayN** (github.com/2dust/v2rayN, bundles Xray). Copy the
   `vless://…` link → in v2rayN: *Servers → Import from clipboard* → select it →
   *Set as active* → enable *System proxy* (or *Tun mode*).

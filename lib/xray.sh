@@ -16,7 +16,11 @@ XRAY_DIR="/etc/rootvpn/xray"
 XRAY_PARAMS="$XRAY_DIR/params"
 XRAY_CLIENTS="$XRAY_DIR/clients.tsv"
 XRAY_CLIENTDIR="$XRAY_DIR/clients"
-XRAY_FLOOR="25.6.8"   # minimum Xray-core version (Aparecium/NewSessionTicket fix)
+# Effective minimum = the pinned, vetted build: upgrade anything OLDER than XRAY_VERSION
+# to it (keep newer). REALITY vs the "Aparecium" scanner is an arms race; the documented
+# NewSessionTicket fix is v25.6.8, but we ship the current pinned build rather than leave a
+# stale-but-"safe" one in place. (XRAY_VERSION is set by awg2 before this file is sourced.)
+XRAY_FLOOR="${XRAY_VERSION:-v26.3.27}"; XRAY_FLOOR="${XRAY_FLOOR#v}"
 
 # Curated REALITY decoy targets: foreign, TLS1.3+HTTP2, non-redirecting, not the
 # overused Apple/CDN set. One is picked at random per deploy (uniqueness); the
@@ -88,7 +92,12 @@ pick_dest() {
     for d in $shuffled; do
         if dest_ok "$d:443"; then printf '%s' "$d:443"; return 0; fi
     done
-    printf '%s' "www.microsoft.com:443"
+    # All curated decoys failed validation. Fall back to the FIRST curated entry —
+    # never www.microsoft.com/amazon: their huge RSA+OCSP cert chains break the
+    # REALITY handshake ("handshake did not complete"), as the docs warn.
+    local first="${XRAY_DESTS_DEFAULT%% *}"
+    warn "no REALITY decoy verified (TLS1.3+h2); falling back to ${first}:443 — set REALITY_DEST to a tested clean decoy and run 'awg2 rotate-reality-target'"
+    printf '%s' "${first}:443"
 }
 
 install_xray() {
