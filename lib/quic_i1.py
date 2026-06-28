@@ -192,7 +192,7 @@ def build_client_hello(sni: str, scid: bytes) -> bytes:
     body = (
         struct.pack("!H", 0x0303)         # legacy_version TLS 1.2
         + os.urandom(32)                   # random
-        + b"\x20" + os.urandom(32)         # legacy_session_id (32 bytes)
+        + b"\x00"                          # legacy_session_id MUST be empty in QUIC (RFC 9001 8.4)
         + struct.pack("!H", 8)             # cipher_suites length (4 suites)
         + struct.pack("!HHHH", grease(), 0x1301, 0x1302, 0x1303)
         + b"\x01\x00"                      # compression: null

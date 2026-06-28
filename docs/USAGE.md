@@ -104,6 +104,33 @@ be the server's, with **no IPv6** and no local DNS showing.
 
 ---
 
+## ⌨️ Command-line: menu, languages & flags
+
+Running `sudo awg2` **with no command on a terminal** opens an interactive menu
+(install / add / list / status / rotate / uninstall) — just press **Enter** to
+install. Piped installs (`curl … | sudo bash`) stay fully non-interactive.
+
+Global flags (work with any command, and via the one-liner):
+
+| Flag | Effect |
+|---|---|
+| `--lang=en\|ru\|zh\|vi` | UI language (also auto-detected from `$LANG`; `RVLANG=` env works too) |
+| `--quiet` / `-q` | only warnings/errors — good for scripts/cron |
+| `--verbose` | extra detail (shows the exact upstream command, etc.) |
+| `--ascii` | plain ASCII, no colour/box glyphs (also honours `NO_COLOR`) |
+
+```bash
+sudo awg2 --lang=ru                 # interactive menu in Russian
+sudo awg2 --lang=zh add alice       # add a client, Chinese output
+curl -fsSL https://raw.githubusercontent.com/antidetect/root.vpn/main/install.sh \
+  | sudo RVLANG=vi REALITY_DEST=dl.google.com bash   # install, Vietnamese UI
+```
+
+The chosen language and config are remembered across the reboots the base
+installer may trigger — re-run the same command to resume.
+
+---
+
 ## ⭐ Optional: one app + automatic failover (advanced)
 
 To avoid juggling two profiles, a **Clash.Meta / Mihomo** client can hold *both*

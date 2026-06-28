@@ -198,7 +198,8 @@ xray_rebuild() {
         local svcuser; svcuser="$(systemctl show -p User --value xray 2>/dev/null || true)"
         if [ -n "$svcuser" ] && [ "$svcuser" != "root" ]; then chown "$svcuser" "$XRAY_CFG" 2>/dev/null || true; fi
     else
-        "$(xbin)" run -test -c "$tmp" 2>&1 | tail -15 || true
+        # Redact REALITY private key / client UUIDs before showing the error dump.
+        "$(xbin)" run -test -c "$tmp" 2>&1 | redact_secrets | tail -15 || true
         rm -f "$tmp"
         die "generated xray config failed 'xray run -test' (not applied)"
     fi
@@ -220,7 +221,7 @@ xray_open_fw() {
 
 xray_setup() {
     need_root
-    log "setting up TCP/443 leg — Xray VLESS+REALITY (transport=${TCP_TRANSPORT:-vision})"
+    vlog "Xray VLESS+REALITY setup (transport=${TCP_TRANSPORT:-vision})"
     local need=""
     for t in curl qrencode openssl unzip; do command -v "$t" >/dev/null 2>&1 || need="$need $t"; done
     if [ -n "$need" ]; then
@@ -307,6 +308,20 @@ cmd_rotate_reality_target() {
     xray_rebuild
     xray_reexport_all
     ok "REALITY target set to $d — re-distribute the new client links"
+}
+
+# Remove the TCP leg: stop Xray, drop the hardening unit + our config/state.
+# Leaves the Xray binary itself (installed by the official script) untouched.
+xray_uninstall() {
+    systemctl disable --now xray >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/xray.service.d/10-rootvpn-hardening.conf 2>/dev/null || true
+    systemctl daemon-reload 2>/dev/null || true
+    rm -rf "$XRAY_DIR" 2>/dev/null || true
+    local port="${TCP_PORT:-443}"
+    command -v ufw >/dev/null 2>&1 && ufw delete allow "$port/tcp" >/dev/null 2>&1 || true
+    iptables -D INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null || true
+    vlog "TCP/443 leg removed (Xray binary left in place)"
+    return 0
 }
 
 xray_status() {

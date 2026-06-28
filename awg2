@@ -41,8 +41,8 @@ set -Eeuo pipefail   # -E: ERR trap is inherited by functions (so aborts report 
 # ---------------------------------------------------------------------------
 # Locate ourselves / load baked defaults
 # ---------------------------------------------------------------------------
-SELF_SRC="${BASH_SOURCE[0]}"
-SCRIPT_DIR="$(cd "$(dirname "$SELF_SRC")" >/dev/null 2>&1 && pwd)"
+SELF_SRC="${BASH_SOURCE[0]:-$0}"   # :-$0 so a piped (curl|bash) invocation under set -u doesn't abort
+SCRIPT_DIR="$(cd "$(dirname "$SELF_SRC")" >/dev/null 2>&1 && pwd || echo .)"
 
 # -------- baked defaults (overridable by defaults.conf, env, or flags) ------
 UPSTREAM_REPO="${UPSTREAM_REPO:-bivlked/amneziawg-installer}"
@@ -85,16 +85,73 @@ if [ -f "$SCRIPT_DIR/defaults.conf" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Pretty output
+# UI + i18n + global flags  (load helpers; parse --lang/--quiet/--verbose/--ascii)
 # ---------------------------------------------------------------------------
-c_red=$'\033[31m'; c_grn=$'\033[32m'; c_yel=$'\033[33m'; c_cyn=$'\033[36m'; c_rst=$'\033[0m'
-log()  { printf '%s[awg2]%s %s\n'  "$c_cyn" "$c_rst" "$*"; }
-ok()   { printf '%s[ ok ]%s %s\n'  "$c_grn" "$c_rst" "$*"; }
-warn() { printf '%s[warn]%s %s\n'  "$c_yel" "$c_rst" "$*" >&2; }
-die()  { printf '%s[fail]%s %s\n'  "$c_red" "$c_rst" "$*" >&2; exit 1; }
-trap 'die "aborted at line $LINENO"' ERR
+QUIET="${QUIET:-0}"; VERBOSE="${VERBOSE:-0}"; AWG_ASCII="${AWG_ASCII:-0}"; RVLANG="${RVLANG:-}"
+for _h in ui i18n; do
+    for _d in "$SCRIPT_DIR/lib" "$AWG_WORKDIR/lib"; do
+        [ -f "$_d/$_h.sh" ] && { . "$_d/$_h.sh"; break; }
+    done
+done
+# Fallback no-op shims if the helper libs (lib/ui.sh, lib/i18n.sh) are missing —
+# degrade to plain output, never crash. Vars get safe defaults too (set -u).
+: "${UI_TTY:=0}"; : "${B:=}"; : "${DIM:=}"; : "${RED:=}"; : "${GRN:=}"; : "${YEL:=}"; : "${CYN:=}"; : "${R:=}"
+: "${G_OK:=*}"; : "${G_WARN:=!}"; : "${G_ERR:=x}"; : "${G_DOT:=-}"
+declare -F log  >/dev/null || log()  { [ "$QUIET" = 1 ] || printf '[awg2] %s\n' "$*"; }
+declare -F vlog >/dev/null || vlog() { [ "$VERBOSE" = 1 ] && printf '[awg2] %s\n' "$*"; return 0; }
+declare -F ok   >/dev/null || ok()   { [ "$QUIET" = 1 ] || printf '[ ok ] %s\n' "$*"; }
+declare -F warn >/dev/null || warn() { printf '[warn] %s\n' "$*" >&2; }
+declare -F die  >/dev/null || die()  { printf '[fail] %s\n' "$*" >&2; exit 1; }
+declare -F t    >/dev/null || t()    { local k="$1"; shift||true; [ "$#" -eq 0 ] && printf '%s' "$k" || printf "$k" "$@"; }
+declare -F section >/dev/null || section() { [ "$QUIET" = 1 ] || printf '\n== %s ==\n' "$*"; }
+declare -F rule    >/dev/null || rule() { :; }
+declare -F step    >/dev/null || step() { log "[$1/$2] $3"; }
+declare -F card    >/dev/null || card() { [ "$QUIET" = 1 ] && return 0; local ti="$1"; shift; printf '\n== %s ==\n' "$ti"; local l; for l in "$@"; do printf '  %s\n' "$l"; done; }
+declare -F redact_secrets >/dev/null || redact_secrets() { cat; }
+declare -F plainfilter    >/dev/null || plainfilter() { cat; }
+declare -F ui_init   >/dev/null || ui_init() { :; }
+declare -F i18n_load >/dev/null || i18n_load() { :; }
 
-need_root() { [ "$(id -u)" -eq 0 ] || die "run as root (sudo)"; }
+# Pull global flags out of the arg list, leave the command + its args in $@.
+RV_ARGS=()
+parse_global_flags() {
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --lang=*)    RVLANG="${1#*=}" ;;
+            --lang)      shift || true; RVLANG="${1:-}" ;;
+            --quiet|-q)  QUIET=1 ;;
+            --verbose)   VERBOSE=1 ;;
+            --ascii)     AWG_ASCII=1 ;;
+            --no-color)  NO_COLOR=1 ;;
+            --)          shift || true; while [ "$#" -gt 0 ]; do RV_ARGS+=("$1"); shift; done; break ;;
+            *)           RV_ARGS+=("$1") ;;
+        esac
+        shift || true
+    done
+}
+parse_global_flags "$@"
+set -- ${RV_ARGS[@]+"${RV_ARGS[@]}"}
+export QUIET VERBOSE AWG_ASCII RVLANG NO_COLOR 2>/dev/null || true
+i18n_load
+ui_init
+
+trap 'die "$(t err.aborted "$LINENO")"' ERR
+
+need_root() { [ "$(id -u)" -eq 0 ] || die "$(t err.need_root)"; }
+
+# A client/profile name we are willing to pass to upstream + use as a path component.
+valid_name() {
+    case "$1" in
+        ''|*[!A-Za-z0-9._-]*) return 1 ;;
+        .|..|-*)              return 1 ;;
+        *) [ "${#1}" -le 32 ] ;;
+    esac
+}
+
+# AmneziaWG is really installed only if the iface config exists AND carries a key.
+awg_installed() {
+    [ -f "$AWG_CONF" ] && grep -q '^PrivateKey = .' "$AWG_CONF" 2>/dev/null
+}
 
 # ---------------------------------------------------------------------------
 # Locate upstream's management script (path can vary across upstream versions)
@@ -289,6 +346,15 @@ self_checks() {
         if [ "$mism" -gt 0 ]; then warn "$mism/$total client(s) have stale I1 - run 'awg2 rotate-i1'"; fails=$((fails + 1))
         elif [ "$total" -gt 0 ]; then ok "all $total client config(s) mirror server I1"; fi
     fi
+
+    # TCP/443 leg (only if enabled): the Xray service must be active AND listening.
+    if [ "${TCP_ENABLED:-0}" = "1" ] && declare -f have_xray >/dev/null && have_xray; then
+        if systemctl is-active --quiet xray 2>/dev/null; then ok "xray service active (TCP leg)"
+        else warn "xray service not active"; fails=$((fails+1)); fi
+        if ss -ltn 2>/dev/null | grep -q ":${TCP_PORT:-443} "; then ok "listening on TCP/${TCP_PORT:-443}"
+        else warn "no TCP listener on ${TCP_PORT:-443}"; fails=$((fails+1)); fi
+    fi
+
     [ "$fails" -eq 0 ] && ok "all checks passed" || warn "$fails check(s) need attention"
 }
 
@@ -297,12 +363,11 @@ print_client() {
     [ -n "$name" ] || return 0
     local conf="/root/awg/$name.conf"
     [ -f "$conf" ] || return 0
-    echo
-    log "client '$name' — AmneziaWG (UDP/443). Import into the Amnezia / AmneziaWG app (>= 4.8.12.x):"
-    echo "  vpn:// link (AmneziaVPN app):  /root/awg/$name.vpnuri"
-    echo "  vpn:// QR  (AmneziaVPN app):   /root/awg/$name.vpnuri.png"
-    echo "  .conf      (AmneziaWG/awg-quick): $conf"
-    echo "  .conf QR   (AmneziaWG app):    /root/awg/$name.png"
+    card "$(t client.awg_title)  ($name)" \
+        "$(t client.apps_awg)" \
+        "vpn://  $G_DOT  /root/awg/$name.vpnuri      ($(t client.qr) /root/awg/$name.vpnuri.png)" \
+        ".conf   $G_DOT  $conf  ($(t client.qr) /root/awg/$name.png)" \
+        "$YEL$(t client.secret)$R"
     # The .conf / vpn:// payloads are large (>~2.5 KB); a terminal QR would exceed
     # capacity, so we point to the PNGs upstream already generated. Never abort here.
     return 0
@@ -314,7 +379,8 @@ print_client() {
 cmd_install() {
     need_root
     validate_config
-    log "hardened AmneziaWG 2.0 install  (tunnel=$AWG_TUNNEL port=$AWG_PORT mimicry=$AWG_MIMICRY preset=${AWG_PRESET:-none})"
+    section "root.vpn"
+    log "$(t install.start "$AWG_TUNNEL" "$AWG_PORT" "$AWG_MIMICRY")"
     if [ "$AWG_MIMICRY" = "quic" ] && [ -z "$AWG_SNI" ]; then
         warn "AWG_SNI is empty -> falling back to shape-only QUIC I1 (no embedded SNI)."
         warn "For real SNI mimicry vs serious DPI, set AWG_SNI in defaults.conf and re-run, or 'awg2 rotate-sni <domain>'."
@@ -328,25 +394,23 @@ cmd_install() {
         fi
     fi
 
-    if [ -f "$AWG_CONF" ]; then
-        log "AmneziaWG already installed ($AWG_CONF present) — skipping upstream base install"
+    if awg_installed; then
+        log "$(t install.awg_present)"
     else
         fetch_upstream; local installer="$UPSTREAM_INSTALLER"
         build_upstream_flags
-        log "running upstream:  bash $UPSTREAM_SCRIPT ${UPSTREAM_FLAGS[*]}"
+        vlog "running upstream:  bash $UPSTREAM_SCRIPT ${UPSTREAM_FLAGS[*]}"
         local irc=0
         if ( cd "$AWG_WORKDIR" && AWG_YES=1 bash "$installer" "${UPSTREAM_FLAGS[@]}" ); then irc=0; else irc=$?; fi
-        if [ ! -f "$AWG_CONF" ]; then
+        if ! awg_installed; then
             # The upstream installer reboots after a kernel/setup step (esp. on fresh
             # images). That is expected, not a failure — resume on the next run.
             echo
-            warn "AmneziaWG base install paused for a reboot (upstream exit=$irc; this is normal on a fresh server)."
-            warn "When the server is back online, run the SAME command again to resume:"
+            warn "$(t reboot.resume)"
             warn "    sudo awg2"
-            warn "It resumes safely; once AmneziaWG is up, the TCP/REALITY leg + clients are configured automatically."
             exit 0
         fi
-        ok "upstream AmneziaWG install finished"
+        ok "$(t common.done 2>/dev/null || echo "AmneziaWG base install finished")"
     fi
 
     apply_quic_i1
@@ -355,13 +419,14 @@ cmd_install() {
     # --- optional TCP/443 leg: Xray VLESS+REALITY, co-located with AWG/UDP ---
     local tcp_on=0
     if [ "${TCP_ENABLED:-0}" = "1" ]; then
-        if declare -f xray_setup >/dev/null; then xray_setup; tcp_on=1
+        if declare -f xray_setup >/dev/null; then
+            log "$(t install.tcp_setup "$TCP_TRANSPORT")"; xray_setup; tcp_on=1
         else warn "TCP_ENABLED=1 but lib/xray.sh not found — TCP/443 leg skipped"; fi
     fi
 
-    if [ -n "$AWG_FIRST_CLIENT" ]; then
-        if ! manage list 2>/dev/null | grep -qw "$AWG_FIRST_CLIENT"; then
-            log "creating first client '$AWG_FIRST_CLIENT'"
+    if [ -n "$AWG_FIRST_CLIENT" ] && valid_name "$AWG_FIRST_CLIENT"; then
+        if ! manage list 2>/dev/null | grep -Fqw "$AWG_FIRST_CLIENT"; then
+            log "$(t install.first_client "$AWG_FIRST_CLIENT")"
             manage add "$AWG_FIRST_CLIENT" >/dev/null 2>&1 || warn "add $AWG_FIRST_CLIENT failed"
         fi
         # Regenerate it from the live (patched) awg0.conf in case 'add' used cached
@@ -373,16 +438,23 @@ cmd_install() {
     fi
 
     self_checks
-    if [ -n "$AWG_FIRST_CLIENT" ]; then
+
+    # ---- final summary card --------------------------------------------------
+    local svc_awg="awg-quick@$AWG_IFACE" lines=()
+    lines+=("$(t summary.awg "$AWG_PORT" "$svc_awg")")
+    if [ "$tcp_on" = "1" ]; then
+        lines+=("$(t summary.tcp "$TCP_PORT" "xray" "${REALITY_DEST:-auto}")")
+    else
+        lines+=("$(t summary.tcp_off)")
+    fi
+    lines+=("$(t summary.manage)")
+    section ""
+    card "$(t summary.title)" "${lines[@]}"
+    log "$(t summary.udponly)"
+
+    if [ -n "$AWG_FIRST_CLIENT" ] && valid_name "$AWG_FIRST_CLIENT"; then
         print_client "$AWG_FIRST_CLIENT"
         [ "$tcp_on" = "1" ] && xray_print_client "$AWG_FIRST_CLIENT"
-    fi
-    echo
-    ok  "done. Manage with: sudo awg2 add <name> | remove <name> | list | rotate-sni <domain>"
-    if [ "$tcp_on" = "1" ]; then
-        ok  "TCP/443 fallback (VLESS+REALITY) is live — each client gets TWO QRs (AWG + vless://). Rotate: awg2 rotate-reality"
-    else
-        warn "AmneziaWG 2.0 is UDP-only. Set TCP_ENABLED=1 (VLESS+REALITY on TCP/443) for UDP-blocked networks."
     fi
 }
 
@@ -408,9 +480,12 @@ cmd_rotate_i1() {
 
 cmd_status() {
     need_root
-    awg show "$AWG_IFACE" 2>/dev/null || warn "interface not up"
+    section "$(t status.title)"
+    # Truncate the (long, non-secret) i1 mimicry blob so status stays readable.
+    { awg show "$AWG_IFACE" 2>/dev/null || warn "interface not up"; } \
+        | sed -E 's/^([[:space:]]*i1: <b 0x[0-9a-f]{12})[0-9a-f]+.*/\1…>/'
     echo; { grep -E '^(ListenPort|I1|H1|H2|H3|H4|S1|S2|S3|S4|Jc|Jmin|Jmax) ' "$AWG_CONF" 2>/dev/null || true; } | sed 's/^I1 = .*/I1 = <quic-mimicry blob hidden>/'
-    echo; manage list -v 2>/dev/null || true
+    echo; manage list -v 2>/dev/null | plainfilter || true
     if [ "${TCP_ENABLED:-0}" = "1" ] && declare -f xray_status >/dev/null; then echo; log "TCP/443 leg (Xray VLESS+REALITY):"; xray_status; fi
 }
 
@@ -418,7 +493,8 @@ cmd_status() {
 cmd_add() {
     need_root
     local name="${1:-}"; [ -n "$name" ] || die "usage: awg2 add <name> [--expires=DUR] [--psk]"
-    if ! manage list 2>/dev/null | grep -qw "$name"; then
+    valid_name "$name" || die "$(t err.bad_name "$name")"
+    if ! manage list 2>/dev/null | grep -Fqw "$name"; then
         manage add "$@" >/dev/null 2>&1 || warn "AWG add failed for $name"
     fi
     [ "$AWG_MIMICRY" != "off" ] && manage regen "$name" >/dev/null 2>&1 || true
@@ -432,6 +508,7 @@ cmd_add() {
 cmd_remove() {
     need_root
     local name="${1:-}"; [ -n "$name" ] || die "usage: awg2 remove <name>"
+    valid_name "$name" || die "$(t err.bad_name "$name")"
     manage remove "$name" >/dev/null 2>&1 || warn "AWG remove failed for $name"
     if [ "${TCP_ENABLED:-0}" = "1" ] && declare -f xray_remove_client >/dev/null; then
         xray_remove_client "$name" || warn "TCP remove failed for $name"
@@ -441,7 +518,7 @@ cmd_remove() {
 
 cmd_list() {
     need_root
-    log "AmneziaWG (UDP/443) clients:"; manage list "$@" 2>/dev/null || true
+    log "AmneziaWG (UDP/443) clients:"; manage list "$@" 2>/dev/null | plainfilter || true
     if [ "${TCP_ENABLED:-0}" = "1" ] && declare -f xray_status >/dev/null && [ -f "${XRAY_CLIENTS:-/nonexistent}" ]; then
         echo; log "VLESS+REALITY (TCP/443) clients:"; { cut -f1 "$XRAY_CLIENTS" 2>/dev/null | sed 's/^/  /'; } || true
     fi
@@ -457,8 +534,42 @@ for _xs in "$SCRIPT_DIR/lib/xray.sh" "$AWG_WORKDIR/lib/xray.sh"; do
 done
 
 # ---------------------------------------------------------------------------
+# Interactive menu — only when run with NO command AND on a real terminal.
+# Reads from /dev/tty so it never hijacks a `curl | sudo bash` pipe (whose stdin
+# is the script itself); in that non-TTY case we fall straight through to install.
+# ---------------------------------------------------------------------------
+menu() {
+    [ "$#" -eq 0 ] || return 1            # only with zero args
+    [ "$QUIET" = 1 ] && return 1          # scripted/quiet -> just install
+    [ -t 0 ] || [ -r /dev/tty ] || return 1
+    [ "${UI_TTY:-0}" = 1 ] || return 1    # not a dumb/redirected terminal
+    section "$(t menu.title)"
+    printf '  %s\n  %s\n  %s\n  %s\n  %s\n  %s\n' \
+        "$(t menu.install)" "$(t menu.add)" "$(t menu.list)" \
+        "$(t menu.status)" "$(t menu.rotate)" "$(t menu.uninstall)"
+    local choice=""; printf '%s' "$(t menu.prompt)" >&2
+    IFS= read -r choice </dev/tty || choice=1
+    [ -n "$choice" ] || choice=1
+    case "$choice" in
+        1) cmd_install ;;
+        2) local n=""; printf '%s' "$(t menu.askname)" >&2; IFS= read -r n </dev/tty || true; cmd_add "$n" ;;
+        3) cmd_list ;;
+        4) cmd_status ;;
+        5) if declare -f cmd_rotate_reality >/dev/null; then cmd_rotate_reality; else die "$(t err.tcp_unavailable)"; fi ;;
+        6) printf '%s' "$(t uninstall.confirm)" >&2; local c=""; IFS= read -r c </dev/tty || true
+           if [ "$c" = "yes" ]; then exec "$SELF_SRC" --lang="$RVLANG" uninstall; else warn "$(t menu.invalid)"; fi ;;
+        *) die "$(t menu.invalid)" ;;
+    esac
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
+if [ "$#" -eq 0 ] && menu; then
+    exit 0
+fi
+
 cmd="${1:-install}"
 case "$cmd" in
     install|"")            shift || true; cmd_install "$@" ;;
@@ -469,10 +580,13 @@ case "$cmd" in
                           need_root; manage "$cmd" "${@:2}" ;;
     rotate-sni)           cmd_rotate_sni "${2:-}" ;;
     rotate-i1)            cmd_rotate_i1 ;;
-    rotate-reality)       declare -f cmd_rotate_reality >/dev/null && cmd_rotate_reality || die "TCP leg unavailable (lib/xray.sh missing)" ;;
-    rotate-reality-target) declare -f cmd_rotate_reality_target >/dev/null && cmd_rotate_reality_target "${2:-}" || die "TCP leg unavailable (lib/xray.sh missing)" ;;
+    rotate-reality)       if declare -f cmd_rotate_reality >/dev/null; then cmd_rotate_reality; else die "$(t err.tcp_unavailable)"; fi ;;
+    rotate-reality-target) if declare -f cmd_rotate_reality_target >/dev/null; then cmd_rotate_reality_target "${2:-}"; else die "$(t err.tcp_unavailable)"; fi ;;
     status)               cmd_status ;;
-    uninstall)            need_root; ( cd "$AWG_WORKDIR" 2>/dev/null && AWG_YES=1 bash "$UPSTREAM_SCRIPT" --uninstall --yes ) || manage uninstall || die "uninstall failed" ;;
+    uninstall)            need_root; ( cd "$AWG_WORKDIR" 2>/dev/null && AWG_YES=1 bash "$UPSTREAM_SCRIPT" --uninstall --yes ) || manage uninstall || true
+                          declare -f xray_uninstall >/dev/null && xray_uninstall || true
+                          rm -rf /etc/root.vpn 2>/dev/null || true
+                          ok "$(t common.done)" ;;
     help|-h|--help)       usage ;;
-    *)                    die "unknown command '$cmd' (try: awg2 help)" ;;
+    *)                    die "$(t err.unknown_cmd "$cmd")" ;;
 esac
