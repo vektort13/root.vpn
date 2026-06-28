@@ -123,7 +123,8 @@ def build_config(p, clients):
     if p.get("CDN_DOMAIN") and p.get("CDN_CERT") and p.get("CDN_KEY"):
         inbounds.append(_cdn_inbound(p, clients))
     return {
-        "log": {"loglevel": "warning"},
+        # No access log: never record client source IP / sniffed SNI to journald.
+        "log": {"access": "none", "error": "", "loglevel": "warning", "dnsLog": False},
         "inbounds": inbounds,
         "outbounds": [
             {"protocol": "freedom", "tag": "direct"},

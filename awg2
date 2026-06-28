@@ -323,11 +323,26 @@ cmd_install() {
         fi
     fi
 
-    fetch_upstream; local installer="$UPSTREAM_INSTALLER"
-    build_upstream_flags
-    log "running upstream:  bash $UPSTREAM_SCRIPT ${UPSTREAM_FLAGS[*]}"
-    ( cd "$AWG_WORKDIR" && AWG_YES=1 bash "$installer" "${UPSTREAM_FLAGS[@]}" )
-    ok "upstream install finished"
+    if [ -f "$AWG_CONF" ]; then
+        log "AmneziaWG already installed ($AWG_CONF present) — skipping upstream base install"
+    else
+        fetch_upstream; local installer="$UPSTREAM_INSTALLER"
+        build_upstream_flags
+        log "running upstream:  bash $UPSTREAM_SCRIPT ${UPSTREAM_FLAGS[*]}"
+        local irc=0
+        if ( cd "$AWG_WORKDIR" && AWG_YES=1 bash "$installer" "${UPSTREAM_FLAGS[@]}" ); then irc=0; else irc=$?; fi
+        if [ ! -f "$AWG_CONF" ]; then
+            # The upstream installer reboots after a kernel/setup step (esp. on fresh
+            # images). That is expected, not a failure — resume on the next run.
+            echo
+            warn "AmneziaWG base install paused for a reboot (upstream exit=$irc; this is normal on a fresh server)."
+            warn "When the server is back online, run the SAME command again to resume:"
+            warn "    sudo awg2"
+            warn "It resumes safely; once AmneziaWG is up, the TCP/REALITY leg + clients are configured automatically."
+            exit 0
+        fi
+        ok "upstream AmneziaWG install finished"
+    fi
 
     apply_quic_i1
     install_self

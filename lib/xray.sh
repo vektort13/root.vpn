@@ -42,6 +42,8 @@ xray_set_param() {
         $1==k{print k"="val; d=1; next} {print}
         END{if(!d) print k"="val}' "$XRAY_PARAMS" > "$XRAY_PARAMS.tmp" \
         && mv "$XRAY_PARAMS.tmp" "$XRAY_PARAMS"
+    chmod 600 "$XRAY_PARAMS" 2>/dev/null || true   # holds REALITY private key
+    return 0
 }
 
 xray_rand_sid()  { openssl rand -hex 8 2>/dev/null || { head -c8 /dev/urandom | od -An -tx1 | tr -d ' \n'; }; }
@@ -167,6 +169,7 @@ xray_rebuild() {
         || die "xray config generation failed"
     if "$(xbin)" run -test -c "$XRAY_CFG.tmp" >/dev/null 2>&1; then
         mv "$XRAY_CFG.tmp" "$XRAY_CFG"
+        chmod 600 "$XRAY_CFG"   # embeds REALITY private key + client UUIDs/shortIds
     else
         "$(xbin)" run -test -c "$XRAY_CFG.tmp" 2>&1 | tail -15 || true
         rm -f "$XRAY_CFG.tmp"
