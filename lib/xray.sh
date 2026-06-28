@@ -90,9 +90,14 @@ install_xray() {
     local ver=""
     have_xray && ver="$("$(xbin)" version 2>/dev/null | head -1 | awk '{print $2}')"
     if [ -z "$ver" ] || ! version_ge "$ver" "$XRAY_FLOOR"; then
+        command -v unzip >/dev/null 2>&1 || apt-get install -y unzip >/dev/null 2>&1 || true
         log "installing Xray-core ${XRAY_VERSION} (need >= v$XRAY_FLOOR)"
-        bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --version "$XRAY_VERSION" >/dev/null 2>&1 \
-            || die "Xray-core install failed"
+        local xlog; xlog="$(mktemp)"
+        if ! TERM=dumb bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --version "$XRAY_VERSION" >"$xlog" 2>&1; then
+            echo "---- xray installer output (tail) ----"; tail -20 "$xlog"; rm -f "$xlog"
+            die "Xray-core install failed"
+        fi
+        rm -f "$xlog"
     else
         log "Xray-core present ($ver >= v$XRAY_FLOOR)"
     fi
@@ -189,9 +194,9 @@ xray_open_fw() {
 xray_setup() {
     need_root
     log "setting up TCP/443 leg — Xray VLESS+REALITY (transport=${TCP_TRANSPORT:-vision})"
-    command -v curl     >/dev/null 2>&1 || apt-get install -y curl     >/dev/null 2>&1 || true
-    command -v qrencode >/dev/null 2>&1 || apt-get install -y qrencode >/dev/null 2>&1 || true
-    command -v openssl  >/dev/null 2>&1 || apt-get install -y openssl  >/dev/null 2>&1 || true
+    local need=""
+    for t in curl qrencode openssl unzip; do command -v "$t" >/dev/null 2>&1 || need="$need $t"; done
+    if [ -n "$need" ]; then log "installing deps:$need"; apt-get install -y $need >/dev/null 2>&1 || warn "apt install may have failed for:$need"; fi
     install_xray
     xray_init_params
     xray_open_fw
