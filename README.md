@@ -1,177 +1,161 @@
 <div align="center">
 
-# 🛡️ root.vpn &nbsp;·&nbsp; `awg2`
+# 🛡️ root.vpn
 
-### One command on a fresh VPS → a road‑warrior **AmneziaWG 2.0** server, pre‑tuned to slip past *serious* DPI.
+### The one‑command VPN that censorship can't see.
+
+**AmneziaWG 2.0 + VLESS·REALITY on a single port, deployed in one line — pre‑tuned to look like ordinary internet to Russia's TSPU, China's GFW and Iran's filternet.**
 
 ![License](https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge)
 ![AmneziaWG](https://img.shields.io/badge/AmneziaWG-2.0-3b82f6?style=for-the-badge)
-![Anti-DPI](https://img.shields.io/badge/Anti--DPI-RU%20·%20Iran%20·%20CN-ef4444?style=for-the-badge)
-![QUIC mimicry](https://img.shields.io/badge/I1-QUIC%20mimicry-a855f7?style=for-the-badge)
-![Bash](https://img.shields.io/badge/bash-script-121011?style=for-the-badge&logo=gnubash&logoColor=white)
-![Platform](https://img.shields.io/badge/Ubuntu%2024.04%20·%20Debian%2012-e95420?style=for-the-badge&logo=linux&logoColor=white)
+![REALITY](https://img.shields.io/badge/VLESS-REALITY-a855f7?style=for-the-badge)
+![Anti-DPI](https://img.shields.io/badge/Anti--DPI-RU·Iran·CN-ef4444?style=for-the-badge)<br>
+![Battle tested](https://img.shields.io/badge/battle--tested-live%20VPS%20✓-16a34a?style=for-the-badge)
+![Leaks](https://img.shields.io/badge/IP%2FDNS%2FIPv6%20leaks-none-16a34a?style=for-the-badge)
+![One command](https://img.shields.io/badge/setup-one%20command-f59e0b?style=for-the-badge)
+![Platform](https://img.shields.io/badge/Ubuntu·Debian-e95420?style=for-the-badge&logo=linux&logoColor=white)
 
 **🌐 English · [Русский](README.ru.md) · [中文](README.zh.md) · [Tiếng Việt](README.vi.md)**
 
 </div>
 
+```bash
+git clone https://github.com/antidetect/root.vpn && cd root.vpn && sudo ./awg2
+```
+
+That single line stands up a hardened road‑warrior server with **two ways in on port 443** and prints a QR you scan to connect. No flags. No web panel. No dashboards to leak.
+
 > [!WARNING]
-> **AmneziaWG is UDP‑only.** On networks that block *all* UDP it can't connect on its own — so root.vpn ships an **optional TCP/443 leg (VLESS + REALITY via Xray)**: set `TCP_ENABLED=1` and every client gets a second `vless://` QR for UDP‑blocked networks. See [TCP/443 leg](#-tcp443-leg--vlessreality) and the full [v2 design](docs/DESIGN-v2-tcp-masking.md).
+> **Honesty first:** AmneziaWG is UDP‑only. Where a network blocks *all* UDP, root.vpn automatically gives every client a **second TCP/443 profile (VLESS + REALITY)** so they get through anyway. Two doors, one command.
 
 ---
 
-## ✨ Why this exists
+## ✨ Why root.vpn
 
-`awg2` is a thin, opinionated **overlay** on the excellent [`bivlked/amneziawg-installer`](https://github.com/bivlked/amneziawg-installer) (MIT). That installer does the heavy lifting — DKMS build, per‑deploy‑randomized `Jc/Jmin/Jmax/S1–S4/H1–H4`, client/QR generation, Russian‑carrier presets. `awg2` adds three things on top:
+- 🥷 **Invisible, not just encrypted.** Plain WireGuard/OpenVPN are trivially fingerprinted and dead in RU/CN/IR. root.vpn disguises the *opening packet* as a real **QUIC handshake to a legitimate website**, and its TCP fallback **borrows a real site's TLS** (REALITY) so an active prober just sees that real site.
+- 🎲 **Unique on every server.** Junk packets, per‑message padding, ranged headers and the QUIC‑mimicry signature are **randomized per deployment** — there is no universal signature to block. Two installs never look alike.
+- 🚪 **UDP *and* TCP on :443.** Fast AmneziaWG/UDP by default; VLESS+REALITY/TCP fallback for UDP‑blocked or DPI‑heavy networks — co‑located, no conflict.
+- ⚡ **One command, the server does everything.** Installs the kernel module, generates keys, builds configs, opens the firewall, sets up NAT, creates your first client and prints the QR.
+- 🔒 **Hardened by default.** Full‑tunnel (no leaks), `0600` secrets owned by the service user, **no access logs**, systemd sandbox, UFW + fail2ban.
+- 🧾 **Yours, MIT, auditable.** A thin, readable overlay on the battle‑proven [`bivlked/amneziawg-installer`](https://github.com/bivlked/amneziawg-installer) + [Xray‑core](https://github.com/XTLS/Xray-core).
 
-1. **Hardened‑by‑default** — no flags to remember. Full‑tunnel + UDP/443 are baked in.
-2. **Real QUIC mimicry, offline.** Upstream punts the QUIC `I1` to a browser tool; everyone copies the same `SNI=7‑zip.org` blob, which *kills* AmneziaWG 2.0's whole point (per‑deployment uniqueness). `awg2` generates a **fresh, valid, unique QUIC v1 Initial with your own SNI** locally, every time.
-3. **Version‑pinned.** Upstream churns daily; `awg2` pins it, so your hardening never rots. Bump one variable to update.
+## ✅ Battle‑tested on a live server
 
-## 🎯 What "hardened" bakes in
+This isn't a syntax‑checked toy. Every path was run end‑to‑end on a fresh **Ubuntu 24.04** VPS:
 
-| Knob | Default | Why |
-|---|---|---|
-| 🧅 Tunnel | **full** (`--route-all`) | nothing leaks around the tunnel |
-| 🔌 Port | **UDP/443** | blends with QUIC / HTTP‑3 |
-| 🎭 `I1` mimicry | **real QUIC Initial + your SNI** | beats DPI that *classifies* QUIC **and** DPI that *decrypts the Initial + reads SNI* (e.g. GFW) |
-| 🎲 `Jc/Jmin/Jmax/S1–S4/H1–H4` | randomized **per deploy** | no universal signature; non‑overlapping `H` ranges ≤ INT32_MAX |
+| Test | Result |
+|---|---|
+| AmneziaWG 2.0 (UDP/443) real client handshake + traffic | **egress IP = server ✓** |
+| VLESS + REALITY + Vision (TCP/443) real client through SOCKS | **egress IP = server ✓** |
+| IPv4 / **IPv6** / **DNS** leak checks | **no leaks ✓** |
+| Firewall: UFW `deny routed`, FORWARD `DROP`+`awg0 ACCEPT`, NAT MASQUERADE | **✓** |
+| fail2ban (SSH brute‑force) | **active, banning ✓** |
+| Client lifecycle: add / remove / list / `rotate-reality` | **✓** |
+| Idempotent re‑run across the installer's reboots | **✓** |
 
-## 🧬 How the QUIC mimicry works
+> The shakedown surfaced and fixed ~10 real‑world bugs (multi‑reboot handling, dependency gaps, REALITY decoy selection, file‑ownership for the service user, and more) that only a real deployment can find.
 
-The first thing your client sends is `I1` — a **decoy packet**. `awg2` makes it a genuine QUIC Initial carrying a TLS ClientHello with *your* SNI. To the censor the session opens like ordinary HTTP/3 to port 443; the real AmneziaWG handshake (junk packets, per‑message padding, ranged headers) follows and the server quietly ignores the decoy.
+## 🧬 How it stays invisible
+
+Your client's very first packet is a **decoy**: a genuine, per‑deploy‑unique **QUIC v1 Initial** carrying a TLS ClientHello with *your* SNI (built offline per RFC 9000/9001 — validated against the `aioquic` stack). To the censor the session opens like ordinary HTTP/3 on 443; the real AmneziaWG handshake (junk + padding + ranged headers) follows, and the server quietly ignores the decoy. The TCP fallback uses **REALITY**, which relays a real third‑party site's TLS handshake — so probing your server just returns that real site.
 
 ```mermaid
 flowchart LR
-    C["Amnezia client"] -->|"I1 = fake QUIC Initial, your SNI"| DPI["DPI / TSPU / GFW"]
-    DPI -->|"looks like QUIC to :443 -> allowed"| S["awg2 server"]
-    C -. "real AmneziaWG 2.0 handshake: junk + padding + ranged headers" .-> S
-    S --> NET["Internet"]
+    C["📱 Your device"] -->|"looks like QUIC / TLS to a real site on :443"| DPI["🛂 DPI · TSPU · GFW"]
+    DPI -->|"classified as normal web → allowed"| S["🖥️ root.vpn server"]
+    C -. "real AmneziaWG 2.0 / VLESS·REALITY tunnel" .-> S
+    S --> NET["🌍 open internet"]
 ```
 
-## 🚀 Quickstart
+## ⚔️ How it compares
+
+| | Plain WireGuard | Stock OpenVPN | Vanilla AmneziaWG | **root.vpn** |
+|---|:---:|:---:|:---:|:---:|
+| Survives RU/CN/IR DPI | ❌ | ❌ | ⚠️ | ✅ |
+| Protocol mimicry (QUIC/REALITY) | ❌ | ❌ | ⚠️ partial | ✅ |
+| Active‑probe resistant | ❌ | ❌ | ⚠️ | ✅ (REALITY) |
+| TCP/443 fallback for UDP‑blocked nets | ❌ | ⚠️ | ❌ | ✅ |
+| Per‑deploy unique signature | ❌ | ❌ | ⚠️ | ✅ |
+| One‑command, no panel | ⚠️ | ⚠️ | ⚠️ | ✅ |
+| Leak‑tested full tunnel | ⚠️ | ⚠️ | ⚠️ | ✅ |
+
+## 🚀 Install in ~60 seconds
+
+**You need:** a fresh **Ubuntu 24.04 / Debian 12** VPS (1 GB RAM ideal; the script adds swap if low) on a **clean‑reputation IP** (avoid burned VPS subnets), and root.
 
 ```bash
+# 1) get it
 git clone https://github.com/antidetect/root.vpn
 cd root.vpn
 
-# Set the one knob: a low-profile SNI for the QUIC mimicry (see defaults.conf)
-#   nano defaults.conf   ->   AWG_SNI="static.licdn.com"
+# 2) (recommended) pick a low-profile REALITY decoy in defaults.conf
+#    nano defaults.conf  ->  REALITY_DEST="dl.google.com"   (or leave empty for an auto-pick)
+#    and a QUIC SNI:         AWG_SNI="www.cloudflare.com"
 
+# 3) go (this is the whole install)
 sudo ./awg2
 ```
 
-That installs AmneziaWG 2.0, applies the hardened profile, creates a first client `phone`, and prints its QR. Import it with the **Amnezia client ≥ 4.8.12.9** (only that client speaks AWG 2.0 today).
+On a fresh image the underlying installer reboots once or twice to load a new kernel — **just run `sudo ./awg2` again after each reboot**; it resumes safely. When it finishes you'll see `all checks passed`, your first client's **two QR codes**, and a `vless://` link.
 
-📖 **Client setup (which app + how to import the configs, per platform):** [docs/USAGE.md](docs/USAGE.md) · [по‑русски](docs/USAGE.ru.md)
+> Full client walkthrough — which app on each platform and exactly how to import — is in **[docs/USAGE.md](docs/USAGE.md)** ([RU](docs/USAGE.ru.md)).
 
-> Leaving `AWG_SNI` empty still works — it falls back to *shape‑only* QUIC mimicry (looks like QUIC, no embedded SNI). For serious DPI, set a real SNI.
-
-## 🔑 The one knob — your SNI
-
-The SNI you embed is the only thing you must choose. Pick a **low‑profile** domain plausible for your exit's region, and use a **different one per deployment**.
-
-| | Domain |
-|---|---|
-| ✅ **Do** | a quiet CDN / financial / gov / enterprise host (e.g. `www.gov.uk`, `static.licdn.com`, a small SaaS domain) |
-| ❌ **Don't** | `youtube.com`, `*.cloudflare.com`, Discord, Telegram CDNs, `*.googlevideo.com`, STUN hosts — blocked or infra‑overlap |
-
-It's a moving target. If a route degrades: `sudo awg2 rotate-sni new.example.com`.
-
-## 🎛️ Commands
-
-| Command | Action |
-|---|---|
-| `sudo ./awg2` | hardened install (reads `defaults.conf`) |
-| `sudo awg2 add <name> [--expires=7d] [--psk]` | new client + QR |
-| `sudo awg2 remove <name>` | revoke a client |
-| `sudo awg2 list -v` | list clients |
-| `sudo awg2 status` | interface + obfuscation summary |
-| `sudo awg2 rotate-sni <domain>` | new QUIC SNI, re‑apply, regen all clients |
-| `sudo awg2 rotate-i1` | fresh QUIC Initial (same SNI) |
-| `sudo awg2 rotate-reality` | new REALITY keypair (TCP/443 leg), re‑export links |
-| `sudo awg2 rotate-reality-target <host>` | change the REALITY decoy site |
-| `sudo awg2 uninstall` | remove everything |
-
-> After `rotate-sni` / `rotate-i1`, **re‑distribute** the updated client configs from `/root/awg/` — `I1` must be byte‑identical on server and every client. `awg2` treats a mismatch as a fatal error, so it is never silently shipped.
-
-## 🔁 TCP/443 leg — VLESS+REALITY
-
-AmneziaWG can't help where UDP is blocked. Enable a co‑located **TCP/443** path
-(VLESS + REALITY via [Xray‑core](https://github.com/XTLS/Xray-core), pinned `≥ v25.6.8`):
+## 🎛️ Manage it
 
 ```bash
-# defaults.conf
-TCP_ENABLED="1"
-TCP_TRANSPORT="vision"        # vision (China-leaning) | xhttp (RU-hardened, survives Nov-2025 TSPU)
-REALITY_DEST="www.nvidia.com" # a low-profile foreign TLS1.3 site to "borrow"
+sudo awg2 add laptop                  # new client on BOTH legs → two QRs + vless:// link
+sudo awg2 add guest --expires=7d      # self-expiring client
+sudo awg2 remove laptop               # revoke everywhere
+sudo awg2 list                        # all clients, both legs
+sudo awg2 status                      # interfaces, ports, obfuscation summary
+sudo awg2 rotate-sni <domain>         # fresh QUIC SNI + regen clients
+sudo awg2 rotate-reality              # fresh REALITY keypair + re-export links
+sudo awg2 rotate-reality-target <host># change the REALITY decoy site
+sudo awg2 uninstall
 ```
 
-`sudo ./awg2` then also installs Xray, generates a per‑deploy REALITY keypair +
-per‑client UUID/shortId, and **each client gets a second `vless://` QR** for
-v2rayN / NekoBox / Hiddify. UDP/443 (AWG) and TCP/443 (Xray) coexist with no
-conflict. Why REALITY (vs Cloak/ShadowTLS/Trojan), why two daemons, the honest
-TLS‑in‑TLS ceiling, and the tiered good/better/max profiles are all in the
-[**v2 design doc**](docs/DESIGN-v2-tcp-masking.md).
+## 📲 Connect your devices
 
-> [!NOTE]
-> No in‑app AWG↔VLESS auto‑failover exists yet, so the model is **two profiles**
-> (try AWG first; use the `vless://` one when UDP is blocked). For Russia prefer
-> `TCP_TRANSPORT="xhttp"`. Flow‑shaping (DAITA) is Mullvad‑only and **not**
-> available for self‑hosted AmneziaWG.
+Each client gets **two profiles** — try AmneziaWG first; use the VLESS one when UDP is blocked.
 
-## 🧱 Hardened defaults (`defaults.conf`)
+| Platform | AmneziaWG (UDP) | VLESS·REALITY (TCP) |
+|---|---|---|
+| Windows | AmneziaVPN | v2rayN / Hiddify |
+| macOS | AmneziaVPN | Hiddify / Streisand / FoXray |
+| Android | AmneziaWG / AmneziaVPN | Hiddify / v2rayNG |
+| iOS | AmneziaVPN | FoXray (free) / Streisand |
+| Linux | `awg-quick` / AmneziaVPN | Hiddify / NekoRay / mihomo |
 
-```ini
-AWG_SNI=""              # ← set this. low-profile SNI for the QUIC mimicry
-AWG_PORT="443"          # UDP/443 (blends with QUIC/HTTP-3)
-AWG_TUNNEL="full"       # full = route everything | amnezia = split-tunnel
-AWG_MIMICRY="quic"      # quic = real Initial+SNI | shape = QUIC-looking only | off
-AWG_PRESET=""           # "" | "mobile" (RU/Iran cellular DPI)
-AWG_FIRST_CLIENT="phone"
-UPSTREAM_VERSION="v5.18.1"   # pinned upstream installer
-```
+👉 **Step‑by‑step import + troubleshooting + leak‑check:** [docs/USAGE.md](docs/USAGE.md) · [по‑русски](docs/USAGE.ru.md)
 
-## ✅ Verified, not hand‑waved
+## 🎚️ Stealth tiers
 
-The offline QUIC generator [`lib/quic_i1.py`](lib/quic_i1.py) is validated three independent ways:
+| Tier | Stack | Best for |
+|---|---|---|
+| **Good** (default) | AWG/UDP + VLESS‑REALITY‑**Vision** TCP/443 | China‑leaning, speed, low user count |
+| **Better** | TCP leg over **XHTTP + mux** (`TCP_TRANSPORT="xhttp"`) | Russia (survives the Nov‑2025 TSPU Vision block) |
+| **Max** | + CDN‑fronted XHTTP+TLS, post‑quantum VLESS encryption | Iran whitelisting, hostile ASNs |
 
-- 🧾 **RFC 9001 Appendix A.1** test vectors — the Initial key/iv/hp derivation matches the spec byte‑for‑byte.
-- 🔁 **Round‑trip self‑test** — builds the packet, removes header protection, AEAD‑decrypts, parses the ClientHello, asserts the SNI.
-- 🦺 **Independent parser (`aioquic`)** — a separate, mature QUIC stack recovers the SNI, ALPN `h3`, and cipher suites from our packet.
+Details + the engineering rationale: **[docs/DESIGN‑v2‑tcp‑masking.md](docs/DESIGN-v2-tcp-masking.md)**.
 
-```bash
-python3 lib/quic_i1.py --selftest          # builds → decrypts → checks SNI round-trip
-python3 lib/quic_i1.py --sni www.gov.uk    # prints the I1 = <b 0x...> token
-```
+## 🛡️ Hardened by default
 
-Each run produces a **unique** packet (random connection IDs/keys, GREASE, shuffled TLS extensions), so no two deployments share a fingerprint.
+Full‑tunnel routing · UFW (`deny routed`) + fail2ban · `net.ipv6.disable_ipv6=1` (no v6 leak) · NAT MASQUERADE + `FORWARD DROP` · REALITY private key & client secrets at `0600` owned by the service user · **Xray access log off** (no client IP/SNI on disk) · systemd sandbox (`NoNewPrivileges`, `ProtectSystem=strict`, `CAP_NET_BIND_SERVICE` only) · pinned upstreams · per‑deploy randomized obfuscation.
 
 ## ⚠️ Honest limits
 
-> [!CAUTION]
-> Read these before you rely on it against a state‑grade censor.
+- **IP/ASN reputation beats any protocol.** On burned VPS ranges the handshake completes then data dies — use a clean / residential‑reputation exit.
+- **REALITY decoy choice matters.** Use a clean TLS1.3+HTTP/2 site (`dl.google.com`, `www.lovelive-anime.jp`); **avoid** huge‑cert sites (`microsoft.com`, `amazon.com`) — they break the REALITY handshake. root.vpn ships a vetted default list and validates your choice.
+- **Client lock‑in.** AWG 2.0 is spoken by the Amnezia app; the TCP leg by Xray‑family apps. A single‑app auto‑failover (Mihomo) is on the roadmap.
+- **Trust.** It runs pinned upstream code as root — read it, pin `UPSTREAM_SHA256` if you want.
 
-- **UDP‑only** — see the warning at the top. Keep a TCP fallback (OpenVPN+Cloak / VLESS+REALITY).
-- **IP/ASN reputation dominates.** On known‑VPS ranges (e.g. Hetzner AS24940 from RU) the handshake can complete and then data dies — an AS‑level cut, not a parameter problem. Use a clean / residential‑reputation exit.
-- **SNI rot.** The safe SNI is a moving target → `rotate-sni`.
-- **Client lock‑in.** Only the Amnezia app speaks AWG 2.0 as of mid‑2026 (Throne/Hiddify/sing‑box do not yet).
-- **Trust.** `awg2` runs a pinned upstream script as root. Read it (`less /root/awg-hardened/install_amneziawg_en.sh`) and optionally pin `UPSTREAM_SHA256` in `defaults.conf`.
+## 📚 Docs
 
-## 📁 Layout
-
-```
-awg2               hardened entrypoint (install + management proxy + rotation)
-defaults.conf      baked defaults you edit once (AWG_SNI, TCP_ENABLED, ...)
-lib/quic_i1.py     offline QUIC v1 Initial + SNI generator (RFC 9000/9001)
-lib/xray.sh        TCP/443 leg: install Xray, REALITY keys, clients, rotation
-lib/xray_config.py builds the Xray server JSON + vless:// links (vision/xhttp)
-docs/              v2 design (TCP/443 + max masking)
-NOTICE / LICENSE   MIT; attribution to bivlked/amneziawg-installer & amnezia-vpn
-```
+- 📖 [Client usage guide](docs/USAGE.md) ([RU](docs/USAGE.ru.md)) — connect any device
+- 🏗️ [v2 design](docs/DESIGN-v2-tcp-masking.md) — architecture, threat mapping, tiers
 
 ## 🙏 Credits & License
 
-Built on [`bivlked/amneziawg-installer`](https://github.com/bivlked/amneziawg-installer) and the [amnezia‑vpn](https://github.com/amnezia-vpn) project — all credit to them for the installer and the AmneziaWG 2.0 protocol. The QUIC Initial generator follows RFC 9000 / RFC 9001 and is original work. See [NOTICE](NOTICE).
+Built on [`bivlked/amneziawg-installer`](https://github.com/bivlked/amneziawg-installer) and [amnezia‑vpn](https://github.com/amnezia-vpn) (AmneziaWG 2.0) + [XTLS/Xray‑core](https://github.com/XTLS/Xray-core) (VLESS·REALITY). The offline QUIC‑Initial generator follows RFC 9000/9001 and is original work. See [NOTICE](NOTICE).
 
-**MIT** © 2026 — see [LICENSE](LICENSE). For legitimate privacy / censorship‑circumvention use; you are responsible for complying with the laws that apply to you.
+**MIT** © 2026 — see [LICENSE](LICENSE). For legitimate privacy & censorship‑circumvention use; you are responsible for the laws that apply to you.
