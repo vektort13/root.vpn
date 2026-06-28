@@ -297,9 +297,12 @@ cmd_rotate_reality_target() {
 
 xray_status() {
     have_xray || { echo "xray: not installed"; return 0; }
-    echo "xray: $("$(xbin)" version 2>/dev/null | head -1)"
+    # awk NR==1 not `| head -1`: with set -E, SIGPIPE in a command substitution
+    # pipeline trips the ERR trap.
+    echo "xray: $("$(xbin)" version 2>/dev/null | awk 'NR==1')"
     echo "xray service: $(systemctl is-active xray 2>/dev/null || echo unknown)"
     if ss -ltn 2>/dev/null | grep -q ":${TCP_PORT:-443} "; then echo "listening: TCP/${TCP_PORT:-443} yes"; else echo "listening: TCP/${TCP_PORT:-443} NO"; fi
     if [ -f "$XRAY_PARAMS" ]; then grep -E '^(TRANSPORT|DEST|SNI|PORT|CDN_DOMAIN)=' "$XRAY_PARAMS" | sed 's/^/  /' || true; fi
     if [ -f "$XRAY_CLIENTS" ]; then echo "  tcp clients: $(grep -c . "$XRAY_CLIENTS" 2>/dev/null || echo 0)"; fi
+    return 0
 }
