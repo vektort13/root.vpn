@@ -1,0 +1,8 @@
+# These run on Linux but are edited on Windows: force LF so bash/python don't choke on CRLF.
+* text=auto eol=lf
+awg2        text eol=lf
+*.sh        text eol=lf
+*.py        text eol=lf
+*.conf      text eol=lf
+*.md        text eol=lf
+*.png       binary

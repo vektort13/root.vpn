@@ -1,0 +1,381 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+#
+# awg2 - hardened, opinionated distribution of bivlked/amneziawg-installer.
+#
+# Goal: ONE command on a fresh VPS, no flags, and the server stands up a
+# road-warrior AmneziaWG 2.0 endpoint already tuned for SERIOUS DPI
+# (RU TSPU / Iran / China):
+#
+#   * full-tunnel (route-all)            - nothing leaks around the tunnel
+#   * UDP/443                            - blends with QUIC / HTTP-3
+#   * QUIC-Initial mimicry on I1         - a REAL, per-deploy-unique QUIC v1
+#                                          Initial carrying your SNI (lib/quic_i1.py),
+#                                          generated offline (no browser tool, no
+#                                          shared "7-zip.org" signature)
+#   * per-deploy randomized Jc/Jmin/Jmax/S1-S4/H1-H4 (done by upstream)
+#
+# This is an OVERLAY, not a hard fork: upstream bivlked/amneziawg-installer is
+# pinned by version and driven through its documented flags + a post-install
+# I1 swap. That way upstream's daily churn never rots your patches - bump one
+# variable (UPSTREAM_VERSION) to update.
+#
+# Upstream:  https://github.com/bivlked/amneziawg-installer  (MIT)
+# This tool: https://github.com/vektort13/...                (MIT)
+#
+# Usage:
+#   sudo ./awg2                      # hardened install (reads ./defaults.conf)
+#   sudo awg2 add <name> [--expires=7d] [--psk]
+#   sudo awg2 remove <name>
+#   sudo awg2 list [-v]
+#   sudo awg2 rotate-sni <domain>    # new QUIC SNI, re-apply, regen all clients
+#   sudo awg2 rotate-i1              # fresh QUIC Initial (same SNI), regen
+#   sudo awg2 status
+#   sudo awg2 uninstall
+#   sudo awg2 help
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Locate ourselves / load baked defaults
+# ---------------------------------------------------------------------------
+SELF_SRC="${BASH_SOURCE[0]}"
+SCRIPT_DIR="$(cd "$(dirname "$SELF_SRC")" >/dev/null 2>&1 && pwd)"
+
+# -------- baked defaults (overridable by defaults.conf, env, or flags) ------
+UPSTREAM_REPO="${UPSTREAM_REPO:-bivlked/amneziawg-installer}"
+UPSTREAM_VERSION="${UPSTREAM_VERSION:-v5.18.1}"
+UPSTREAM_SCRIPT="${UPSTREAM_SCRIPT:-install_amneziawg_en.sh}"
+UPSTREAM_SHA256="${UPSTREAM_SHA256:-}"        # optional: pin a known good hash
+
+AWG_SNI="${AWG_SNI:-}"                          # QUIC SNI to embed (empty -> shape-only)
+AWG_PORT="${AWG_PORT:-443}"
+AWG_TUNNEL="${AWG_TUNNEL:-full}"               # full | amnezia
+AWG_PRESET="${AWG_PRESET:-}"                    # "" | mobile
+AWG_SUBNET="${AWG_SUBNET:-}"                    # "" -> upstream default (10.9.9.0/24)
+AWG_MIMICRY="${AWG_MIMICRY:-quic}"             # quic | shape | off
+AWG_FIRST_CLIENT="${AWG_FIRST_CLIENT:-phone}"  # "" to skip
+
+AWG_WORKDIR="${AWG_WORKDIR:-/root/awg-hardened}"
+AWG_CONF="${AWG_CONF:-/etc/amnezia/amneziawg/awg0.conf}"
+AWG_IFACE="${AWG_IFACE:-awg0}"
+SELF_RAW_BASE="${SELF_RAW_BASE:-}"             # optional raw URL base to fetch lib/ in curl|bash mode
+
+# Load defaults.conf sitting next to the script (preferred way to bake config).
+if [ -f "$SCRIPT_DIR/defaults.conf" ]; then
+    # shellcheck disable=SC1091
+    . "$SCRIPT_DIR/defaults.conf"
+fi
+
+# ---------------------------------------------------------------------------
+# Pretty output
+# ---------------------------------------------------------------------------
+c_red=$'\033[31m'; c_grn=$'\033[32m'; c_yel=$'\033[33m'; c_cyn=$'\033[36m'; c_rst=$'\033[0m'
+log()  { printf '%s[awg2]%s %s\n'  "$c_cyn" "$c_rst" "$*"; }
+ok()   { printf '%s[ ok ]%s %s\n'  "$c_grn" "$c_rst" "$*"; }
+warn() { printf '%s[warn]%s %s\n'  "$c_yel" "$c_rst" "$*" >&2; }
+die()  { printf '%s[fail]%s %s\n'  "$c_red" "$c_rst" "$*" >&2; exit 1; }
+trap 'die "aborted at line $LINENO"' ERR
+
+need_root() { [ "$(id -u)" -eq 0 ] || die "run as root (sudo)"; }
+
+# ---------------------------------------------------------------------------
+# Locate upstream's management script (path can vary across upstream versions)
+# ---------------------------------------------------------------------------
+find_manage() {
+    local p
+    for p in /root/awg/manage_amneziawg.sh /etc/amnezia/amneziawg/manage_amneziawg.sh; do
+        [ -f "$p" ] && { echo "$p"; return 0; }
+    done
+    p="$(find /root /etc/amnezia -maxdepth 3 -name manage_amneziawg.sh 2>/dev/null | head -1 || true)"
+    [ -n "$p" ] && { echo "$p"; return 0; }
+    return 1
+}
+manage() {
+    local m; m="$(find_manage)" || die "manage_amneziawg.sh not found - is AmneziaWG installed? run: sudo awg2"
+    bash "$m" "$@"
+}
+
+# ---------------------------------------------------------------------------
+# Resolve lib/quic_i1.py (adjacent, in workdir, or fetched in curl|bash mode)
+# ---------------------------------------------------------------------------
+locate_lib() {
+    local cand
+    for cand in "$SCRIPT_DIR/lib/quic_i1.py" "$AWG_WORKDIR/lib/quic_i1.py"; do
+        [ -f "$cand" ] && { echo "$cand"; return 0; }
+    done
+    if [ -n "$SELF_RAW_BASE" ]; then
+        mkdir -p "$AWG_WORKDIR/lib"
+        if curl -fsSL "$SELF_RAW_BASE/lib/quic_i1.py" -o "$AWG_WORKDIR/lib/quic_i1.py" 2>/dev/null; then
+            echo "$AWG_WORKDIR/lib/quic_i1.py"; return 0
+        fi
+    fi
+    return 1
+}
+
+have_quic_crypto() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 -c "import cryptography" >/dev/null 2>&1 || return 1
+    return 0
+}
+
+# Emit the I1 value to stdout for the requested mimicry mode.
+gen_i1() {
+    local sni="$1" lib out
+    case "$AWG_MIMICRY" in
+        off)
+            return 1 ;;                                  # keep upstream's I1
+        quic)
+            if [ -n "$sni" ] && have_quic_crypto && lib="$(locate_lib)"; then
+                if out="$(python3 "$lib" --sni "$sni")"; then
+                    printf '%s\n' "$out"; return 0       # real QUIC Initial + SNI
+                fi
+                warn "QUIC+SNI generator errored; falling back to shape-only QUIC I1"
+            else
+                warn "QUIC+SNI generator unavailable (need SNI + python3-cryptography + lib/quic_i1.py); using shape-only QUIC I1"
+            fi
+            ;& # graceful fall-through (never aborts -> never leaves a stale I1)
+        shape)
+            # Shape-only QUIC long-header CPS template; AmneziaWG fills <r>/<t> fresh
+            # per packet. No real SNI, but classifiers keying on the QUIC header pass.
+            local n=$(( 900 + RANDOM % 100 ))
+            printf '<b 0xc3><b 0x00000001><b 0x08><r 8><b 0x00><b 0x00><r %d><t>\n' "$n"
+            return 0 ;;
+        *)
+            die "unknown AWG_MIMICRY=$AWG_MIMICRY (use quic|shape|off)" ;;
+    esac
+}
+
+# Literal, quoting-safe replace/insert of the I1 line in a config file.
+set_i1_in_conf() {
+    local val="$1" conf="$2"
+    [ -f "$conf" ] || die "config not found: $conf"
+    if grep -q '^I1 = ' "$conf"; then
+        I1NEW="$val" awk 'BEGIN{v=ENVIRON["I1NEW"]} /^I1 = /{print "I1 = " v; next} {print}' \
+            "$conf" > "$conf.awg2.tmp"
+    else
+        # insert right after the [Interface] PrivateKey line
+        I1NEW="$val" awk 'BEGIN{v=ENVIRON["I1NEW"]; d=0} {print}
+            /^PrivateKey = /&&!d{print "I1 = " v; d=1}' "$conf" > "$conf.awg2.tmp"
+    fi
+    mv "$conf.awg2.tmp" "$conf"
+}
+
+apply_quic_i1() {
+    [ "$AWG_MIMICRY" = "off" ] && { log "AWG_MIMICRY=off - keeping upstream I1"; return 0; }
+    local i1
+    # gen_i1 always yields a value for quic/shape; treat anything else as fatal so
+    # we never leave the server on a new I1 while clients keep the old one.
+    i1="$(gen_i1 "$AWG_SNI")" || die "I1 generation failed (mimicry=$AWG_MIMICRY)"
+    [ -n "$i1" ] || die "I1 generator produced empty output (mimicry=$AWG_MIMICRY)"
+    log "writing QUIC-mimicry I1 to server config (${#i1} chars)"
+    set_i1_in_conf "$i1" "$AWG_CONF"
+    log "restarting awg-quick@$AWG_IFACE"
+    systemctl restart "awg-quick@$AWG_IFACE"
+    log "regenerating client configs so they mirror the new I1"
+    # The I1 MUST be byte-identical on server and clients; a swallowed regen
+    # failure would silently break every tunnel. Surface it and abort.
+    local rlog; rlog="$(mktemp)"
+    if ! manage regen >"$rlog" 2>&1; then
+        # A zero-client regen is not a failure (nothing to mirror yet). Only abort
+        # when clients actually exist and could be left holding a stale I1.
+        if find /root/awg -maxdepth 1 -name '*.conf' 2>/dev/null | grep -q .; then
+            sed -n '1,40p' "$rlog" 2>/dev/null || true
+            rm -f "$rlog"
+            die "client regen failed - server I1 changed but clients are stale; fix before distributing configs"
+        fi
+    fi
+    rm -f "$rlog"
+}
+
+# ---------------------------------------------------------------------------
+# Fetch the pinned upstream installer
+# ---------------------------------------------------------------------------
+fetch_upstream() {
+    mkdir -p "$AWG_WORKDIR"
+    local url="https://raw.githubusercontent.com/$UPSTREAM_REPO/$UPSTREAM_VERSION/$UPSTREAM_SCRIPT"
+    local dst="$AWG_WORKDIR/$UPSTREAM_SCRIPT"
+    log "fetching upstream $UPSTREAM_REPO@$UPSTREAM_VERSION"
+    curl -fsSL "$url" -o "$dst" || die "download failed: $url"
+    if [ -n "$UPSTREAM_SHA256" ]; then
+        echo "$UPSTREAM_SHA256  $dst" | sha256sum -c - || die "upstream checksum mismatch (refusing to run)"
+        ok "upstream checksum verified"
+    else
+        warn "UPSTREAM_SHA256 not pinned; integrity rests on the immutable git tag $UPSTREAM_VERSION over HTTPS"
+        log  "this build's hash: $(sha256sum "$dst" | cut -d' ' -f1)"
+    fi
+    echo "$dst"
+}
+
+UPSTREAM_FLAGS=()                                  # populated by build_upstream_flags
+build_upstream_flags() {
+    UPSTREAM_FLAGS=(--yes)
+    case "$AWG_TUNNEL" in
+        full)    UPSTREAM_FLAGS+=(--route-all) ;;
+        amnezia) UPSTREAM_FLAGS+=(--route-amnezia) ;;
+        *)       die "unknown AWG_TUNNEL=$AWG_TUNNEL (use full|amnezia)" ;;
+    esac
+    UPSTREAM_FLAGS+=("--port=$AWG_PORT")
+    [ -n "$AWG_PRESET" ] && UPSTREAM_FLAGS+=("--preset=$AWG_PRESET")
+    [ -n "$AWG_SUBNET" ] && UPSTREAM_FLAGS+=("--subnet=$AWG_SUBNET")
+}
+
+validate_config() {
+    case "$AWG_TUNNEL"  in full|amnezia) ;; *) die "AWG_TUNNEL must be full|amnezia (got '$AWG_TUNNEL')";; esac
+    case "$AWG_MIMICRY" in quic|shape|off) ;; *) die "AWG_MIMICRY must be quic|shape|off (got '$AWG_MIMICRY')";; esac
+    case "$AWG_PORT" in ''|*[!0-9]*) die "AWG_PORT must be numeric (got '$AWG_PORT')";; esac
+    [ "$AWG_PORT" -ge 1 ] && [ "$AWG_PORT" -le 65535 ] || die "AWG_PORT out of range: $AWG_PORT"
+}
+
+# ---------------------------------------------------------------------------
+# Install self into the system so `awg2 <cmd>` works afterwards
+# ---------------------------------------------------------------------------
+install_self() {
+    mkdir -p "$AWG_WORKDIR/lib"
+    cp -f "$SELF_SRC" "$AWG_WORKDIR/awg2" 2>/dev/null || true
+    [ -f "$SCRIPT_DIR/defaults.conf" ] && cp -f "$SCRIPT_DIR/defaults.conf" "$AWG_WORKDIR/defaults.conf" 2>/dev/null || true
+    [ -f "$SCRIPT_DIR/lib/quic_i1.py" ] && cp -f "$SCRIPT_DIR/lib/quic_i1.py" "$AWG_WORKDIR/lib/quic_i1.py" 2>/dev/null || true
+    chmod +x "$AWG_WORKDIR/awg2" 2>/dev/null || true
+    ln -sf "$AWG_WORKDIR/awg2" /usr/local/sbin/awg2 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# Post-install verification (T1..T6 from the build spec)
+# ---------------------------------------------------------------------------
+self_checks() {
+    log "running post-install checks"
+    local fails=0
+    if awg show "$AWG_IFACE" >/dev/null 2>&1; then ok "interface $AWG_IFACE is up"
+    else warn "interface $AWG_IFACE not up"; fails=$((fails+1)); fi
+
+    if ss -lun 2>/dev/null | grep -q ":$AWG_PORT\b"; then ok "listening on UDP/$AWG_PORT"
+    else warn "no UDP listener on $AWG_PORT"; fails=$((fails+1)); fi
+
+    if [ "$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo 0)" = "1" ]; then ok "ip_forward enabled"
+    else warn "ip_forward not enabled"; fails=$((fails+1)); fi
+
+    if grep -q '^I1 = ' "$AWG_CONF"; then ok "I1 present in server config"
+    else warn "no I1 line in $AWG_CONF (mimicry not applied)"; fails=$((fails+1)); fi
+
+    # Mirror check: EVERY client's I1 must equal the server's I1.
+    local srv_i1 cli_i1 f total=0 mism=0
+    srv_i1="$(grep -m1 '^I1 = ' "$AWG_CONF" || true)"
+    if [ -n "$srv_i1" ]; then
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            total=$((total + 1))
+            cli_i1="$(grep -m1 '^I1 = ' "$f" || true)"
+            [ "$cli_i1" = "$srv_i1" ] || { mism=$((mism + 1)); warn "stale I1 in $(basename "$f")"; }
+        done < <(find /root/awg -maxdepth 1 -name '*.conf' 2>/dev/null)
+        if [ "$mism" -gt 0 ]; then warn "$mism/$total client(s) have stale I1 - run 'awg2 rotate-i1'"; fails=$((fails + 1))
+        elif [ "$total" -gt 0 ]; then ok "all $total client config(s) mirror server I1"; fi
+    fi
+    [ "$fails" -eq 0 ] && ok "all checks passed" || warn "$fails check(s) need attention"
+}
+
+print_client() {
+    local name="$1" conf="/root/awg/$name.conf"
+    [ -f "$conf" ] || return 0
+    echo
+    log "client '$name' — scan this QR with the Amnezia client (>= 4.8.12.9):"
+    if command -v qrencode >/dev/null 2>&1; then qrencode -t ansiutf8 < "$conf"; fi
+    echo "  config : $conf"
+    echo "  qr png : /root/awg/$name.png"
+    echo "  vpnuri : /root/awg/$name.vpnuri  (one-tap import)"
+}
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+cmd_install() {
+    need_root
+    validate_config
+    log "hardened AmneziaWG 2.0 install  (tunnel=$AWG_TUNNEL port=$AWG_PORT mimicry=$AWG_MIMICRY preset=${AWG_PRESET:-none})"
+    if [ "$AWG_MIMICRY" = "quic" ] && [ -z "$AWG_SNI" ]; then
+        warn "AWG_SNI is empty -> falling back to shape-only QUIC I1 (no embedded SNI)."
+        warn "For real SNI mimicry vs serious DPI, set AWG_SNI in defaults.conf and re-run, or 'awg2 rotate-sni <domain>'."
+    fi
+    if [ "$AWG_MIMICRY" = "quic" ] && [ -n "$AWG_SNI" ]; then
+        log "ensuring python3-cryptography for QUIC I1 generation"
+        if ! have_quic_crypto; then
+            apt-get update -y >/dev/null 2>&1 || true
+            apt-get install -y python3 python3-cryptography >/dev/null 2>&1 \
+                || warn "could not install python3-cryptography; will fall back to shape-only I1"
+        fi
+    fi
+
+    local installer; installer="$(fetch_upstream)"
+    build_upstream_flags
+    log "running upstream:  bash $UPSTREAM_SCRIPT ${UPSTREAM_FLAGS[*]}"
+    ( cd "$AWG_WORKDIR" && AWG_YES=1 bash "$installer" "${UPSTREAM_FLAGS[@]}" )
+    ok "upstream install finished"
+
+    apply_quic_i1
+    install_self
+
+    if [ -n "$AWG_FIRST_CLIENT" ]; then
+        if ! manage list 2>/dev/null | grep -qw "$AWG_FIRST_CLIENT"; then
+            log "creating first client '$AWG_FIRST_CLIENT'"
+            manage add "$AWG_FIRST_CLIENT" >/dev/null 2>&1 || warn "add $AWG_FIRST_CLIENT failed"
+        fi
+        # Regenerate it from the live (patched) awg0.conf in case 'add' used cached
+        # params; self_checks then verifies the mirror across ALL clients.
+        if [ "$AWG_MIMICRY" != "off" ]; then
+            manage regen "$AWG_FIRST_CLIENT" >/dev/null 2>&1 || warn "regen of $AWG_FIRST_CLIENT failed - check 'awg2 status'"
+        fi
+    fi
+
+    self_checks
+    [ -n "$AWG_FIRST_CLIENT" ] && print_client "$AWG_FIRST_CLIENT"
+    echo
+    ok  "done. Manage with: sudo awg2 add <name> | remove <name> | list | rotate-sni <domain>"
+    warn "remember: AmneziaWG 2.0 is UDP-only. If a network blocks all UDP / allows only TCP-443-to-CDN,"
+    warn "          this cannot connect there - keep an OpenVPN+Cloak or VLESS+REALITY fallback on the same VPS."
+}
+
+cmd_rotate_sni() {
+    need_root
+    local domain="${1:-}"; [ -n "$domain" ] || die "usage: awg2 rotate-sni <domain>"
+    AWG_SNI="$domain"; AWG_MIMICRY="quic"
+    if ! have_quic_crypto; then
+        apt-get update -y >/dev/null 2>&1 || true
+        apt-get install -y python3 python3-cryptography >/dev/null 2>&1 || true
+    fi
+    apply_quic_i1
+    self_checks
+    ok "SNI rotated to '$domain'. Re-distribute updated client configs from /root/awg/."
+}
+
+cmd_rotate_i1() {
+    need_root
+    apply_quic_i1
+    self_checks
+    ok "I1 regenerated. Re-distribute updated client configs from /root/awg/."
+}
+
+cmd_status() {
+    need_root
+    awg show "$AWG_IFACE" 2>/dev/null || warn "interface not up"
+    echo; { grep -E '^(ListenPort|I1|H1|H2|H3|H4|S1|S2|S3|S4|Jc|Jmin|Jmax) ' "$AWG_CONF" 2>/dev/null || true; } | sed 's/^I1 = .*/I1 = <quic-mimicry blob hidden>/'
+    echo; manage list -v 2>/dev/null || true
+}
+
+usage() {
+    sed -n '3,40p' "$SELF_SRC" | sed 's/^# \{0,1\}//'
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+cmd="${1:-install}"
+case "$cmd" in
+    install|"")            shift || true; cmd_install "$@" ;;
+    add|remove|list|stats|show|regen|backup|restore|check|diagnose|repair-module|restart)
+                          need_root; manage "$cmd" "${@:2}" ;;
+    rotate-sni)           cmd_rotate_sni "${2:-}" ;;
+    rotate-i1)            cmd_rotate_i1 ;;
+    status)               cmd_status ;;
+    uninstall)            need_root; ( cd "$AWG_WORKDIR" 2>/dev/null && AWG_YES=1 bash "$UPSTREAM_SCRIPT" --uninstall --yes ) || manage uninstall || die "uninstall failed" ;;
+    help|-h|--help)       usage ;;
+    *)                    die "unknown command '$cmd' (try: awg2 help)" ;;
+esac

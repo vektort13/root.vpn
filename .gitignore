@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+*.awg2.tmp
+*.tmp

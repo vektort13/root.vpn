@@ -1,0 +1,21 @@
+amneziawg-hardened
+==================
+
+This project is an OVERLAY (hardened defaults + an offline QUIC-Initial I1
+generator) on top of, and at runtime drives, the following upstream projects.
+It does not vendor their source; it fetches a pinned release at install time.
+
+- bivlked/amneziawg-installer  (MIT License)
+  https://github.com/bivlked/amneziawg-installer
+  The actual one-command AmneziaWG 2.0 installer that awg2 invokes. All credit
+  for the DKMS install flow, client/QR generation, carrier presets, and the
+  per-deploy obfuscation parameter generation belongs to its author.
+
+- amnezia-vpn project  (AmneziaWG, amneziawg-tools, amneziawg-go, kernel module)
+  https://github.com/amnezia-vpn
+  The AmneziaWG 2.0 protocol and tooling.
+
+The QUIC v1 Initial packet construction in lib/quic_i1.py follows RFC 9000
+(QUIC transport) and RFC 9001 (Using TLS to Secure QUIC), and is original work.
+
+Nothing here is endorsed by or affiliated with the upstream authors.
