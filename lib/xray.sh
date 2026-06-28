@@ -170,14 +170,16 @@ EOF
 
 xray_rebuild() {
     local lib; lib="$(locate_xray_lib)" || die "lib/xray_config.py not found"
-    python3 "$lib" build-config --params "$XRAY_PARAMS" --clients "$XRAY_CLIENTS" > "$XRAY_CFG.tmp" \
+    # Xray infers config format from the file EXTENSION, so the temp must end in .json.
+    local tmp="${XRAY_CFG%.json}.rootvpn-tmp.json"
+    python3 "$lib" build-config --params "$XRAY_PARAMS" --clients "$XRAY_CLIENTS" > "$tmp" \
         || die "xray config generation failed"
-    if "$(xbin)" run -test -c "$XRAY_CFG.tmp" >/dev/null 2>&1; then
-        mv "$XRAY_CFG.tmp" "$XRAY_CFG"
+    if "$(xbin)" run -test -c "$tmp" >/dev/null 2>&1; then
+        mv "$tmp" "$XRAY_CFG"
         chmod 600 "$XRAY_CFG"   # embeds REALITY private key + client UUIDs/shortIds
     else
-        "$(xbin)" run -test -c "$XRAY_CFG.tmp" 2>&1 | tail -15 || true
-        rm -f "$XRAY_CFG.tmp"
+        "$(xbin)" run -test -c "$tmp" 2>&1 | tail -15 || true
+        rm -f "$tmp"
         die "generated xray config failed 'xray run -test' (not applied)"
     fi
     systemctl enable xray >/dev/null 2>&1 || true
