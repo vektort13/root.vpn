@@ -20,8 +20,8 @@
 # I1 swap. That way upstream's daily churn never rots your patches - bump one
 # variable (UPSTREAM_VERSION) to update.
 #
-# Upstream:  https://github.com/bivlked/amneziawg-installer  (MIT)
-# This tool: https://github.com/vektort13/...                (MIT)
+# Upstream:  https://github.com/bivlked/amneziawg-installer       (MIT)
+# This tool: https://github.com/antidetect/amneziawg-hardened     (MIT)
 #
 # Usage:
 #   sudo ./awg2                      # hardened install (reads ./defaults.conf)
