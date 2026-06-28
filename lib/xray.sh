@@ -53,7 +53,7 @@ detect_pub_ip() {
     local ip
     ip="$(curl -fsS4 https://api.ipify.org 2>/dev/null || true)"
     [ -n "$ip" ] || ip="$(curl -fsS https://ifconfig.me 2>/dev/null || true)"
-    [ -n "$ip" ] || ip="$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' | head -1)"
+    [ -n "$ip" ] || ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '/src/{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)"
     printf '%s' "$ip"
 }
 
@@ -61,8 +61,8 @@ detect_pub_ip() {
 xray_gen_keys() {
     local out priv pub
     out="$("$(xbin)" x25519 2>/dev/null)" || return 1
-    priv="$(printf '%s\n' "$out" | grep -iE 'private' | head -1 | sed 's/^[^:]*: *//')"
-    pub="$(printf '%s\n' "$out" | grep -iE 'password|public' | grep -iv 'private' | head -1 | sed 's/^[^:]*: *//')"
+    priv="$(printf '%s\n' "$out" | awk -F': *' 'tolower($0) ~ /private/{print $2; exit}')"
+    pub="$(printf '%s\n' "$out" | awk -F': *' 'tolower($0) ~ /password|public/ && tolower($0) !~ /private/{print $2; exit}')"
     [ -n "$priv" ] && [ -n "$pub" ] || return 1
     printf '%s\t%s\n' "$priv" "$pub"
 }
@@ -88,7 +88,9 @@ pick_dest() {
 
 install_xray() {
     local ver=""
-    have_xray && ver="$("$(xbin)" version 2>/dev/null | head -1 | awk '{print $2}')"
+    # awk NR==1 (not `| head -1`): head closes the pipe early -> SIGPIPE -> pipefail
+    # -> nonzero -> set -E ERR trap would abort. awk consumes all input safely.
+    if have_xray; then ver="$({ "$(xbin)" version 2>/dev/null || true; } | awk 'NR==1{print $2}')"; fi
     if [ -z "$ver" ] || ! version_ge "$ver" "$XRAY_FLOOR"; then
         command -v unzip >/dev/null 2>&1 || apt-get install -y unzip >/dev/null 2>&1 || true
         log "installing Xray-core ${XRAY_VERSION} (need >= v$XRAY_FLOOR)"
