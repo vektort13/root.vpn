@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡️ amneziawg-hardened &nbsp;·&nbsp; `awg2`
+# 🛡️ root.vpn &nbsp;·&nbsp; `awg2`
 
 ### 在全新 VPS 上一条命令 → 一台预先调优、可绕过*严苛* DPI 的 **AmneziaWG 2.0** 远程接入服务器。
 
@@ -52,8 +52,8 @@ flowchart LR
 ## 🚀 快速开始
 
 ```bash
-git clone https://github.com/antidetect/amneziawg-hardened
-cd amneziawg-hardened
+git clone https://github.com/antidetect/root.vpn
+cd root.vpn
 
 # 设置唯一的开关：用于 QUIC 伪装的低调 SNI（见 defaults.conf）
 #   nano defaults.conf   ->   AWG_SNI="static.licdn.com"

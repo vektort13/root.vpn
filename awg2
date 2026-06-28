@@ -21,7 +21,7 @@
 # variable (UPSTREAM_VERSION) to update.
 #
 # Upstream:  https://github.com/bivlked/amneziawg-installer       (MIT)
-# This tool: https://github.com/antidetect/amneziawg-hardened     (MIT)
+# This tool: https://github.com/antidetect/root.vpn     (MIT)
 #
 # Usage:
 #   sudo ./awg2                      # hardened install (reads ./defaults.conf)

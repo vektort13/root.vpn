@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡️ amneziawg-hardened &nbsp;·&nbsp; `awg2`
+# 🛡️ root.vpn &nbsp;·&nbsp; `awg2`
 
 ### Одна команда на чистом VPS → road‑warrior сервер **AmneziaWG 2.0**, заранее закалённый против *серьёзного* DPI.
 
@@ -52,8 +52,8 @@ flowchart LR
 ## 🚀 Быстрый старт
 
 ```bash
-git clone https://github.com/antidetect/amneziawg-hardened
-cd amneziawg-hardened
+git clone https://github.com/antidetect/root.vpn
+cd root.vpn
 
 # Задайте единственный тумблер: низкопрофильный SNI для QUIC-мимикрии (см. defaults.conf)
 #   nano defaults.conf   ->   AWG_SNI="static.licdn.com"

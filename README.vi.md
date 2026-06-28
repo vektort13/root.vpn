@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡️ amneziawg-hardened &nbsp;·&nbsp; `awg2`
+# 🛡️ root.vpn &nbsp;·&nbsp; `awg2`
 
 ### Một lệnh trên VPS mới → máy chủ **AmneziaWG 2.0** kiểu road‑warrior, tinh chỉnh sẵn để vượt qua DPI *khắt khe*.
 
@@ -52,8 +52,8 @@ flowchart LR
 ## 🚀 Bắt đầu nhanh
 
 ```bash
-git clone https://github.com/antidetect/amneziawg-hardened
-cd amneziawg-hardened
+git clone https://github.com/antidetect/root.vpn
+cd root.vpn
 
 # Đặt công tắc duy nhất: một SNI kín đáo cho phần giả dạng QUIC (xem defaults.conf)
 #   nano defaults.conf   ->   AWG_SNI="static.licdn.com"

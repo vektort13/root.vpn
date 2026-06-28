@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡️ amneziawg-hardened &nbsp;·&nbsp; `awg2`
+# 🛡️ root.vpn &nbsp;·&nbsp; `awg2`
 
 ### One command on a fresh VPS → a road‑warrior **AmneziaWG 2.0** server, pre‑tuned to slip past *serious* DPI.
 
@@ -52,8 +52,8 @@ flowchart LR
 ## 🚀 Quickstart
 
 ```bash
-git clone https://github.com/antidetect/amneziawg-hardened
-cd amneziawg-hardened
+git clone https://github.com/antidetect/root.vpn
+cd root.vpn
 
 # Set the one knob: a low-profile SNI for the QUIC mimicry (see defaults.conf)
 #   nano defaults.conf   ->   AWG_SNI="static.licdn.com"
