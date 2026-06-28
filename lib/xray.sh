@@ -179,13 +179,22 @@ xray_rebuild() {
     if "$(xbin)" run -test -c "$tmp" >/dev/null 2>&1; then
         mv "$tmp" "$XRAY_CFG"
         chmod 600 "$XRAY_CFG"   # embeds REALITY private key + client UUIDs/shortIds
+        # The service runs as a non-root user (e.g. nobody); make the 600 file
+        # readable by exactly that user, not world.
+        local svcuser; svcuser="$(systemctl show -p User --value xray 2>/dev/null || true)"
+        if [ -n "$svcuser" ] && [ "$svcuser" != "root" ]; then chown "$svcuser" "$XRAY_CFG" 2>/dev/null || true; fi
     else
         "$(xbin)" run -test -c "$tmp" 2>&1 | tail -15 || true
         rm -f "$tmp"
         die "generated xray config failed 'xray run -test' (not applied)"
     fi
     systemctl enable xray >/dev/null 2>&1 || true
-    systemctl restart xray 2>/dev/null || die "xray restart failed"
+    systemctl restart xray 2>/dev/null || true
+    sleep 1
+    if ! systemctl is-active --quiet xray; then
+        journalctl -u xray -n 15 --no-pager 2>/dev/null | tail -15 || true
+        die "xray failed to start after applying config (see journal above)"
+    fi
 }
 
 xray_open_fw() {
